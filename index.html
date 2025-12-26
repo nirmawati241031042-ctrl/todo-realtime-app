@@ -1,0 +1,177 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Realtime To-Do App</title>
+    <style>
+      body { font-family: system-ui, Arial; max-width: 820px; margin: 40px auto; }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      input { padding: 8px; }
+      button { padding: 8px 12px; cursor: pointer; }
+      .box { border: 1px solid #ddd; border-radius: 10px; padding: 14px; margin-top: 16px; }
+      .ok { color: green; }
+      .bad { color: #b00020; }
+      .muted { color: #666; font-size: 14px; }
+
+      #todoList { margin-top: 12px; padding-left: 0; list-style: none; }
+      #todoList li {
+        display: flex; align-items: center; gap: 10px;
+        padding: 10px; border: 1px solid #eee; border-radius: 10px;
+        margin-bottom: 10px; cursor: pointer;
+      }
+      #todoList li:hover { border-color: #ddd; }
+      .todoText { flex: 1; }
+      .done { text-decoration: line-through; color: #666; }
+      .badge { font-size: 12px; padding: 2px 8px; border: 1px solid #ddd; border-radius: 999px; }
+      .danger { border: 1px solid #f3b2b2; }
+    </style>
+  </head>
+
+  <body>
+    <h1>Realtime To-Do Collaboration App</h1>
+
+    <div class="box">
+      <div class="row">
+        <label>Nama: <input id="name" value="User" /></label>
+        <label>Room: <input id="room" value="demo" /></label>
+        <button id="joinBtn">Join</button>
+        <span id="socketStatus">Connecting...</span>
+      </div>
+
+      <p id="joinStatus" style="margin-top: 10px;"></p>
+      <p class="muted">Klik item untuk toggle ✅. Edit/Hapus realtime.</p>
+    </div>
+
+    <div class="box">
+      <div class="row" style="justify-content: space-between;">
+        <h3 style="margin: 0;">To-Do</h3>
+        <span class="badge" id="countBadge">0 item</span>
+      </div>
+
+      <div class="row" style="margin-top: 10px;">
+        <input id="todoText" placeholder="Tulis tugas..." style="flex: 1; min-width: 240px;" />
+        <button id="addTodoBtn">Tambah</button>
+      </div>
+
+      <ul id="todoList"></ul>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+      const socketStatus = document.getElementById("socketStatus");
+      const joinStatus = document.getElementById("joinStatus");
+
+      const nameInput = document.getElementById("name");
+      const roomInput = document.getElementById("room");
+      const joinBtn = document.getElementById("joinBtn");
+
+      const todoText = document.getElementById("todoText");
+      const addTodoBtn = document.getElementById("addTodoBtn");
+      const todoList = document.getElementById("todoList");
+      const countBadge = document.getElementById("countBadge");
+
+      const socket = io("http://localhost:3001");
+
+      let currentRoom = "demo";
+      let joined = false;
+      let todos = [];
+
+      socket.on("connect", () => {
+        socketStatus.textContent = "Connected ✅";
+        socketStatus.className = "ok";
+      });
+
+      socket.on("disconnect", () => {
+        socketStatus.textContent = "Disconnected ❌";
+        socketStatus.className = "bad";
+        joined = false;
+      });
+
+      joinBtn.addEventListener("click", () => {
+        const user = nameInput.value.trim() || "Anonymous";
+        const roomId = roomInput.value.trim() || "demo";
+        socket.emit("room:join", { roomId, user });
+
+        joinStatus.textContent = "Joining...";
+        joinStatus.className = "";
+      });
+
+      socket.on("room:joined", ({ roomId, user }) => {
+        joinStatus.textContent = `Joined ✅  Nama: ${user} | Room: ${roomId}`;
+        joinStatus.className = "ok";
+
+        currentRoom = roomId;
+        joined = true;
+      });
+
+      function renderAll() {
+        todoList.innerHTML = "";
+
+        for (const t of todos) {
+          const li = document.createElement("li");
+
+          // klik item -> toggle
+          li.addEventListener("click", () => {
+            if (!joined) return;
+            socket.emit("todo:toggle", { roomId: currentRoom, id: t.id });
+          });
+
+          const icon = document.createElement("span");
+          icon.textContent = t.done ? "✅" : "⬜";
+
+          const textEl = document.createElement("span");
+          textEl.className = "todoText " + (t.done ? "done" : "");
+          textEl.textContent = t.text;
+
+          const editBtn = document.createElement("button");
+          editBtn.textContent = "Edit";
+          editBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (!joined) return;
+
+            const next = prompt("Edit todo:", t.text);
+            if (next == null) return;
+            socket.emit("todo:edit", { roomId: currentRoom, id: t.id, text: next });
+          });
+
+          const delBtn = document.createElement("button");
+          delBtn.className = "danger";
+          delBtn.textContent = "Hapus";
+          delBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (!joined) return;
+            socket.emit("todo:delete", { roomId: currentRoom, id: t.id });
+          });
+
+          li.appendChild(icon);
+          li.appendChild(textEl);
+          li.appendChild(editBtn);
+          li.appendChild(delBtn);
+
+          todoList.appendChild(li);
+        }
+
+        countBadge.textContent = `${todos.length} item`;
+      }
+
+      addTodoBtn.addEventListener("click", () => {
+        if (!joined) return alert("Join room dulu ya.");
+        const text = todoText.value.trim();
+        if (!text) return;
+
+        socket.emit("todo:add", { roomId: currentRoom, text });
+        todoText.value = "";
+        todoText.focus();
+      });
+
+      todoText.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") addTodoBtn.click();
+      });
+
+      socket.on("todos:sync", ({ todos: next }) => {
+        todos = Array.isArray(next) ? next : [];
+        renderAll();
+      });
+    </script>
+  </body>
+</html>
